@@ -1,6 +1,5 @@
 """P2 生产 — 播种 + 购买种子 + 施肥"""
 import time
-import pyautogui
 from loguru import logger
 
 from models.farm_state import ActionType
@@ -58,26 +57,11 @@ class PlantStrategy(BaseStrategy):
         if not self.action_executor:
             return all_actions
 
-        # 按住种子位置
-        seed_abs_x, seed_abs_y = self.action_executor.relative_to_absolute(
-            seed_det.x, seed_det.y)
-        pyautogui.moveTo(seed_abs_x, seed_abs_y, duration=0.05)
-        time.sleep(0.1)
-        pyautogui.mouseDown()
-        time.sleep(0.1)
-
-        # 依次拖到每块空地
-        planted_count = 0
-        for land in lands:
-            if self.stopped:
-                break
-            abs_x, abs_y = self.action_executor.relative_to_absolute(land.x, land.y)
-            pyautogui.moveTo(abs_x, abs_y, duration=0.1)
-            time.sleep(0.15)
-            planted_count += 1
-
-        # 松开鼠标
-        pyautogui.mouseUp()
+        path = [(seed_det.x, seed_det.y)] + [(land.x, land.y) for land in lands]
+        if not self.action_executor.drag_relative_path(path, move_delay=0.15):
+            logger.warning("播种流程: 后台拖拽失败")
+            return all_actions
+        planted_count = len(lands)
         logger.info(f"播种流程: 拖拽播种完成，共 {planted_count} 块")
         all_actions.append(f"播种{crop_name}×{planted_count}")
 
@@ -274,12 +258,11 @@ class PlantStrategy(BaseStrategy):
                     if max_btn and self.action_executor:
                         clicks = buy_qty - 1
                         logger.info(f"购买流程: 点击加号 {clicks} 次")
-                        abs_x, abs_y = self.action_executor.relative_to_absolute(
-                            max_btn.x, max_btn.y)
                         for _ in range(clicks):
                             if self.stopped:
                                 return None
-                            pyautogui.click(abs_x, abs_y)
+                            self.action_executor.click_relative(
+                                max_btn.x, max_btn.y, use_offset=False)
                             time.sleep(0.1)
                         time.sleep(0.3)  # 等待数量更新
 

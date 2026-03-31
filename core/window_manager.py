@@ -94,11 +94,14 @@ class WindowManager:
             return False
         try:
             hwnd = self._cached_window.hwnd
+            # 临时禁用“移动到左下角”逻辑，只调整窗口大小并保持当前位置。
             # 获取工作区域（排除任务栏）
-            work_area = ctypes.wintypes.RECT()
-            ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0)
-            pos_x = work_area.left
-            pos_y = max(work_area.top, work_area.bottom - height)
+            # work_area = ctypes.wintypes.RECT()
+            # ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0)
+            # pos_x = work_area.left
+            # pos_y = max(work_area.top, work_area.bottom - height)
+            pos_x = self._cached_window.left
+            pos_y = self._cached_window.top
             ctypes.windll.user32.MoveWindow(hwnd, pos_x, pos_y, width, height, True)
             self._cached_window.left = pos_x
             self._cached_window.top = pos_y

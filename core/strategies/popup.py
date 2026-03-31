@@ -9,7 +9,6 @@ from core.strategies.base import BaseStrategy
 
 
 class PopupStrategy(BaseStrategy):
-
     def handle_popup(self, detections: list[DetectResult]) -> str | None:
         """处理弹窗：分享(双倍奖励) > 领取 > 确认 > 关闭 > 取消"""
         # 优先检测分享按钮（任务奖励弹窗，拿双倍）

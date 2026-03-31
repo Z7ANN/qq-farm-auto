@@ -22,7 +22,7 @@ from loguru import logger
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
-from models.config import AppConfig, PlantMode
+from models.config import AppConfig, PlantMode, RunMode
 from models.farm_state import ActionType
 from models.game_data import get_best_crop_for_level, get_crop_by_name, format_grow_time
 from core.window_manager import WindowManager
@@ -31,6 +31,7 @@ from core.cv_detector import CVDetector, DetectResult
 from core.action_executor import ActionExecutor
 from core.task_scheduler import TaskScheduler, BotState
 from core.scene_detector import Scene, identify_scene
+from utils.run_mode_decorator import Config as DecoratorConfig, UNSET
 from core.strategies import (
     PopupStrategy, HarvestStrategy, MaintainStrategy,
     PlantStrategy, ExpandStrategy, FriendStrategy, TaskStrategy,
@@ -91,6 +92,7 @@ class BotEngine(QObject):
 
         # [4] 操作执行层
         self.action_executor: ActionExecutor | None = None
+        self._current_hwnd: int | None = None
 
         # 调度
         self.scheduler = TaskScheduler()
@@ -113,6 +115,16 @@ class BotEngine(QObject):
     def update_config(self, config: AppConfig):
         self.config = config
         self.task.sell_config = config.sell
+        if self.action_executor:
+            self.action_executor.update_run_mode(config.safety.run_mode)
+
+    def get_run_mode(self) -> RunMode:
+        return self.config.safety.run_mode
+
+    def resolve_dispatch_option(self, key: str):
+        if key == "RUN_MODE":
+            return self.config.safety.run_mode
+        return UNSET
 
     def _resolve_crop_name(self) -> str:
         """根据策略决定种植作物"""
@@ -153,16 +165,17 @@ class BotEngine(QObject):
             self.log_message.emit("未找到QQ农场窗口，请先打开微信小程序中的QQ农场")
             return False
 
-        w, h = self.config.planting.window_width, self.config.planting.window_height
-        if w > 0 and h > 0:
-            self.window_manager.resize_window(w, h)
-            time.sleep(0.5)
-            window = self.window_manager.refresh_window_info(self.config.window_title_keyword)
-            self.log_message.emit(f"窗口已调整为 {window.width}x{window.height}")
+        window = self._prepare_start_window_by_mode(window)
+        if not window:
+            self.log_message.emit("窗口准备失败")
+            return False
 
         rect = (window.left, window.top, window.width, window.height)
+        self._current_hwnd = window.hwnd
         self.action_executor = ActionExecutor(
             window_rect=rect,
+            hwnd=window.hwnd,
+            run_mode=self.config.safety.run_mode,
             delay_min=self.config.safety.random_delay_min,
             delay_max=self.config.safety.random_delay_max,
             click_offset=self.config.safety.click_offset_range,
@@ -174,6 +187,31 @@ class BotEngine(QObject):
         self.scheduler.start(farm_ms, friend_ms)
         self.log_message.emit(f"Bot已启动 - 窗口: {window.title} | 模板: {tpl_count}个")
         return True
+
+    @DecoratorConfig.when(RUN_MODE=RunMode.BACKGROUND)
+    def _prepare_start_window_by_mode(self, window):
+        return self._prepare_start_window_background(window)
+
+    @DecoratorConfig.when(RUN_MODE=RunMode.FOREGROUND)
+    def _prepare_start_window_by_mode(self, window):
+        return self._prepare_start_window_foreground(window)
+
+    def _prepare_start_window_foreground(self, window):
+        return self._resize_window_if_needed(window)
+
+    def _prepare_start_window_background(self, window):
+        return self._resize_window_if_needed(window)
+
+    def _resize_window_if_needed(self, window):
+        w, h = self.config.planting.window_width, self.config.planting.window_height
+        if w > 0 and h > 0:
+            self.window_manager.resize_window(w, h)
+            time.sleep(0.5)
+            refreshed = self.window_manager.refresh_window_info(self.config.window_title_keyword)
+            if refreshed:
+                self.log_message.emit(f"窗口已调整为 {refreshed.width}x{refreshed.height}")
+                return refreshed
+        return window
 
     def stop(self):
         for s in self._strategies:
@@ -242,21 +280,34 @@ class BotEngine(QObject):
         window = self.window_manager.refresh_window_info(self.config.window_title_keyword)
         if not window:
             return None
-        self.window_manager.activate_window()
-        time.sleep(0.3)
+        self._prepare_window_focus_by_mode()
         rect = (window.left, window.top, window.width, window.height)
+        self._current_hwnd = window.hwnd
         if self.action_executor:
             self.action_executor.update_window_rect(rect)
+            self.action_executor.update_window_handle(window.hwnd)
         return rect
+
+    @DecoratorConfig.when(RUN_MODE=RunMode.BACKGROUND)
+    def _prepare_window_focus_by_mode(self):
+        return self._prepare_window_focus_background()
+
+    @DecoratorConfig.when(RUN_MODE=RunMode.FOREGROUND)
+    def _prepare_window_focus_by_mode(self):
+        return self._prepare_window_focus_foreground()
+
+    def _prepare_window_focus_foreground(self):
+        self.window_manager.activate_window()
+        time.sleep(0.2)
+
+    def _prepare_window_focus_background(self):
+        return None
 
     def _capture_and_detect(self, rect: tuple, prefix: str = "farm",
                             categories: list[str] | None = None,
                             save: bool = True
                             ) -> tuple[np.ndarray | None, list[DetectResult], PILImage.Image | None]:
-        if save:
-            image, _ = self.screen_capture.capture_and_save(rect, prefix)
-        else:
-            image = self.screen_capture.capture_region(rect)
+        image = self._capture_image_by_mode(rect, prefix, save)
         if image is None:
             return None, [], None
         self.screenshot_updated.emit(image)
@@ -284,6 +335,31 @@ class BotEngine(QObject):
                           and not (d.name == "btn_expand" and d.confidence < 0.85)]
 
         return cv_image, detections, image
+
+    @DecoratorConfig.when(RUN_MODE=RunMode.BACKGROUND)
+    def _capture_image_by_mode(self, rect: tuple, prefix: str, save: bool):
+        return self._capture_image_background(rect, prefix, save)
+
+    @DecoratorConfig.when(RUN_MODE=RunMode.FOREGROUND)
+    def _capture_image_by_mode(self, rect: tuple, prefix: str, save: bool):
+        return self._capture_image_foreground(rect, prefix, save)
+
+    def _capture_image_foreground(self, rect: tuple, prefix: str, save: bool):
+        if save:
+            image, _ = self.screen_capture.capture_and_save(rect, prefix)
+            return image
+        return self.screen_capture.capture_region(rect)
+
+    def _capture_image_background(self, rect: tuple, prefix: str, save: bool):
+        if self._current_hwnd is None:
+            # 兜底到前台截图路径，避免后台句柄缺失导致整轮失败
+            return self._capture_image_foreground(rect, prefix, save)
+        if save:
+            image, _ = self.screen_capture.capture_window_print_and_save(
+                self._current_hwnd, prefix
+            )
+            return image
+        return self.screen_capture.capture_window_print(self._current_hwnd)
 
     def _emit_annotated(self, cv_image: np.ndarray, detections: list[DetectResult]):
         if detections:

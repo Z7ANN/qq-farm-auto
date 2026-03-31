@@ -15,6 +15,11 @@ class SellMode(str, Enum):
     SELECTIVE = "selective"        # 选择性出售（只卖勾选的作物）
 
 
+class RunMode(str, Enum):
+    FOREGROUND = "foreground"      # 前台模拟输入（需要窗口在前台）
+    BACKGROUND = "background"      # 后台消息点击（不抢焦点）
+
+
 class FeaturesConfig(BaseModel):
     auto_harvest: bool = True
     auto_plant: bool = True
@@ -40,6 +45,7 @@ class SafetyConfig(BaseModel):
     random_delay_max: float = 0.3
     click_offset_range: int = 5
     max_actions_per_round: int = 20
+    run_mode: RunMode = RunMode.BACKGROUND
 
 
 class ScreenshotConfig(BaseModel):

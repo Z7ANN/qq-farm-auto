@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 
-from models.config import AppConfig, PlantMode
+from models.config import AppConfig, PlantMode, RunMode
 from models.game_data import CROPS, get_crop_names, format_grow_time, get_best_crop_for_level
 
 
@@ -93,6 +93,10 @@ class SettingsPanel(QWidget):
         mf.setSpacing(5)
         self._window_keyword = QLineEdit()
         mf.addRow("窗口关键词:", self._window_keyword)
+        self._run_mode = QComboBox()
+        self._run_mode.addItem("后台", RunMode.BACKGROUND.value)
+        self._run_mode.addItem("前台", RunMode.FOREGROUND.value)
+        mf.addRow("运行方式:", self._run_mode)
         row_sched = QHBoxLayout()
         self._farm_interval = QSpinBox()
         self._farm_interval.setRange(1, 120)
@@ -119,6 +123,7 @@ class SettingsPanel(QWidget):
         self._crop_combo.currentIndexChanged.connect(self._auto_save)
         self._buy_quantity.valueChanged.connect(self._auto_save)
         self._window_keyword.editingFinished.connect(self._auto_save)
+        self._run_mode.currentIndexChanged.connect(self._auto_save)
         self._farm_interval.valueChanged.connect(self._auto_save)
         self._friend_interval.valueChanged.connect(self._auto_save)
         for cb in (self._cb_harvest, self._cb_plant, self._cb_water,
@@ -137,6 +142,7 @@ class SettingsPanel(QWidget):
         if 0 <= idx < len(self._crop_names):
             c.planting.preferred_crop = self._crop_names[idx]
         c.window_title_keyword = self._window_keyword.text().strip()
+        c.safety.run_mode = RunMode(self._run_mode.currentData())
         c.schedule.farm_check_minutes = self._farm_interval.value()
         c.schedule.friend_check_minutes = self._friend_interval.value()
         c.features.auto_harvest = self._cb_harvest.isChecked()
@@ -197,6 +203,8 @@ class SettingsPanel(QWidget):
                 self._crop_names.index(c.planting.preferred_crop))
         self._on_level_changed(c.planting.player_level)
         self._window_keyword.setText(c.window_title_keyword)
+        run_mode_idx = 0 if c.safety.run_mode == RunMode.BACKGROUND else 1
+        self._run_mode.setCurrentIndex(run_mode_idx)
         self._farm_interval.setValue(c.schedule.farm_check_minutes)
         self._friend_interval.setValue(c.schedule.friend_check_minutes)
         self._cb_harvest.setChecked(c.features.auto_harvest)
